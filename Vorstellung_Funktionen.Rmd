@@ -1,0 +1,963 @@
+---
+title: 'Beispiele: useful functions'
+author: "Stephan Junker"
+date: "18 10 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Bibliotheken laden
+```{r}
+library(readstata13)
+
+library(survey)
+library(srvyr)
+library(kableExtra)
+library(summarytools)
+library(dplyr)
+
+```
+
+# Funktionen definieren
+```{r}
+### pub_describe
+
+# Functions
+
+###############################
+# To-Do
+#  1. nice_table und nice_svy_table zusammenführen
+#  2. Trendtable Ã¼berprÃ¼fen
+#  3. excel export mit openxlsx wegen html export
+#  4. Paket erstellen
+###############################
+
+### pub_describe
+
+##Nochmal Varianz/Standarddeviation pruefen
+
+#helpfunction
+perc_function <- function(data=data_use, var_string, type) {
+  if (type=="prop") {
+    props  <- data %>% group_by(!!sym(var_string)) %>% summarize(props_weighted=survey_mean(na.rm=TRUE)) %>% na.omit()
+    names(props)[1] <- "category"
+    return(props)
+  }
+  if (type=="mean"){
+    mean  <- data %>% summarize(mean_weighted=survey_mean(!!sym(var_string), na.rm=TRUE, vartype=c("var")))
+    return(mean)
+  }
+}
+
+
+
+pub_describe <- function(data, ..., round = 3, pub = TRUE, html = TRUE, excel=FALSE) {
+  # keys = c("N", "missing", "percent (unweighted)", "percent (weighted)", "mean (unweighted)", "SD (unweighted)", "mean (weighted)", "SD (weighted)"
+  # 1. Schritt: erkennen ob survey design oder nicht
+  # 2. Schritt: Frequencies von allen und missings von allen
+  # 3. Schritt: Numeric or factor
+  # 4. mean oder frequencies berechnen (weighted und unweighted)
+  # 5. in data frame einfÃ¼gen
+  
+  vars_quo <- enquos(...)
+  if(length(vars_quo)==0){
+    data_use <- data
+  } else {
+    data_use <- data %>% select(!!!vars_quo)
+    
+  }
+  
+  if(class(data)[1]=="data.frame"){
+    
+    num <- Filter(is.numeric, data_use) %>% colnames()
+    cat <-Filter(is.factor, data_use) %>% colnames()
+    obs <- nrow(data_use)
+    missing <- colSums(is.na(data_use))
+    
+    N = obs - missing
+    
+    description_table <- data.frame(varnames=colnames(data_use), N=N, missing=missing)
+    
+    if (length(cat)>0) {
+      if (length(cat)==1) {
+        list_cat_freq <- list(table(data_use[, cat]))
+        names(list_cat_freq) <- cat
+      } else {
+        list_cat_freq <- lapply(data_use[, cat], table)
+      }
+      
+      
+      list_cat_perc <- lapply(list_cat_freq, prop.table)
+      list_cat_freq <- lapply(list_cat_freq, data.frame)
+      list_cat_perc <- lapply(list_cat_perc, data.frame)
+      
+      
+      cat_table <- bind_rows(list_cat_freq, .id="varnames")
+      perc_table <- bind_rows(list_cat_perc)
+      cat_table <- cbind(cat_table, perc_table["Freq"])
+      colnames(cat_table) <- c("varnames", "category", "N", "percent (unweighted)")
+      cat_table["percent (unweighted)"] <- cat_table["percent (unweighted)"]*100
+      
+      description_table <- bind_rows(description_table, cat_table)
+      
+    }
+    
+    if (length(num)>0) {
+      if (length(num)==1) {
+        description_table[description_table$varnames==num , "mean (unweighted)"] <- mean(as.matrix(data_use[, num]), na.rm=TRUE)
+        description_table[description_table$varnames==num , "SD (unweighted)"] <- sd(as.matrix(data_use[, num]), na.rm=TRUE)
+      } else {
+        description_table[description_table$varnames %in% num , "mean (unweighted)"] <- sapply(data_use[, num], function(x) mean(x, na.rm=TRUE))
+        description_table[description_table$varnames %in% num , "SD (unweighted)"] <- sapply(data_use[, num], function(x) sd(x, na.rm=TRUE))
+      }
+    }
+    
+    # Order table conditionally on the kind of variables choosen
+    if(length(cat)>0 & length(num)==0){
+      description_table <- description_table[, c("varnames", "category", "N", "missing", "percent (unweighted)")]
+    } else if(length(num)>0 & length(cat)==0) {
+      description_table <- description_table[, c("varnames", "N", "missing", "mean (unweighted)", "SD (unweighted)")]
+    } else {
+      description_table <- description_table[, c("varnames", "category", "N", "missing", "percent (unweighted)", "mean (unweighted)", "SD (unweighted)")]
+    }
+    
+  } else if(class(data)[1]=="tbl_svy"){
+    
+    num <- Filter(is.numeric, data_use$variables) %>% colnames()
+    cat <-Filter(is.factor, data_use$variables) %>% colnames()
+    obs <- nrow(data_use$variables)
+    missing <- colSums(is.na(data_use$variables))
+    
+    N = obs - missing
+    
+    description_table <- data.frame(varnames=colnames(data_use$variables), N=N, missing=missing)
+    
+    ## ungewichtet ##
+    if (length(cat)>0) {
+      
+      if (length(cat)==1) {
+        list_cat_freq <- list(table(data_use$variables[, cat]))
+        names(list_cat_freq) <- cat
+      } else {
+        list_cat_freq <- lapply(data_use$variables[, cat], table)
+      }
+      
+      list_cat_perc <- lapply(list_cat_freq, prop.table)
+      list_cat_freq <- lapply(list_cat_freq, data.frame)
+      list_cat_perc <- lapply(list_cat_perc, data.frame)
+      
+      cat_table <- bind_rows(list_cat_freq, .id="varnames")
+      perc_table <- bind_rows(list_cat_perc)
+      cat_table <- cbind(cat_table, perc_table["Freq"])
+      
+      colnames(cat_table) <- c("varnames", "category", "N", "percent (unweighted)")
+      
+    }
+    if (length(num)>0) {
+      if (length(num)==1) {
+
+        description_table[description_table$varnames==num , "mean (unweighted)"] <- mean(as.matrix(data_use$variables[, num]), na.rm=TRUE)
+        description_table[description_table$varnames==num , "SD (unweighted)"] <- sd(as.matrix(data_use$variables[, num]), na.rm=TRUE)
+
+      } else {
+        description_table[description_table$varnames %in% num , "mean (unweighted)"] <- sapply(data_use$variables[, num], function(x) mean(x, na.rm=TRUE))
+        description_table[description_table$varnames %in% num , "SD (unweighted)"] <- sapply(data_use$variables[, num], function(x) sd(x, na.rm=TRUE))
+      }
+    }
+    
+    ## gewichtet ##
+    
+    
+    if (length(cat)>0) {
+      
+      if (length(cat)==1) {
+        cat_table[cat_table$varnames==cat, "percent (weighted)"] <- perc_function(data=data_use, cat, type="prop")["props_weighted"]
+      } else {
+        prop_weighted <- lapply(cat, function(x) perc_function(data=data_use, x, type="prop"))
+        names(prop_weighted) <- cat
+        prop_weighted <- bind_rows(prop_weighted, .id="varnames")
+        prop_weighted <- as.data.frame(prop_weighted)
+        cat_table[cat_table$varnames %in% cat, "percent (weighted)"] <- prop_weighted$props_weighted
+      }
+      
+      percent_cols <- c("percent (unweighted)", "percent (weighted)")
+      cat_table[percent_cols] <- sapply(cat_table[percent_cols], function(x) x*100)
+      
+      description_table <- bind_rows(description_table, cat_table)
+    }
+    
+    if (length(num)>0) {
+      if (length(num)==1) {
+        description_table[description_table$varnames==num , c("mean (weighted)", "SD (weighted)")] <- perc_function(data=data_use, num, type="mean")
+      } else {
+        description_table[description_table$varnames %in% num, c("mean (weighted)", "SD (weighted)")] <- sapply(num, function(x) perc_function(data=data_use, x, type="mean")) %>% 
+          t() %>%
+          as.data.frame() %>%
+          sapply(as.numeric)
+      }
+      description_table[description_table$varnames %in% num, "SD (weighted)"] <- sqrt(as.numeric(description_table[description_table$varnames %in% num, "SD (weighted)"]))
+    }
+    
+    # Order table conditionally on the kind of variables choosen
+    if(length(cat)>0 & length(num)==0){
+      description_table <- description_table[, c("varnames", "category", "N", "missing", "percent (unweighted)",  "percent (weighted)")]
+    } else if(length(num)>0 & length(cat)==0) {
+      description_table <- description_table[, c("varnames", "N", "missing", "mean (unweighted)", "SD (unweighted)", "mean (weighted)", "SD (weighted)")]
+    } else {
+      description_table <- description_table[, c("varnames", "category", "N", "missing", "percent (unweighted)",  "percent (weighted)", "mean (unweighted)", "SD (unweighted)", "mean (weighted)", "SD (weighted)")]
+    }
+  }
+  
+  else stop('class of data must be data.frame or tbl_svy')
+  
+  num_cols <- Filter(is.numeric, description_table) %>% colnames()
+  description_table <- description_table %>% arrange(!is.na(varnames), varnames)
+  description_table[, num_cols] <- round(description_table[, num_cols], round)
+  
+  if(pub==TRUE) {
+    description_table_nareplace <- description_table
+    if(length(cat)>0){
+    description_table_nareplace$category <- as.character(description_table_nareplace$category)
+    }
+    description_table_nareplace[is.na(description_table_nareplace)] <- ""
+    description_table_nareplace[description_table_nareplace=="NULL"] <- ""
+    return(description_table_nareplace)
+    
+  } else {
+    return(description_table)
+  }
+}
+
+# Standard function for frequency tables without survey Design
+nice_table <- function(data, variable, name=FALSE) {
+  x <- data[variable]
+  a <- freq(x)
+  a <- cbind(data.frame(row.names(a)),a)
+  if(name==FALSE) {
+    names <- c(variable, "Anzahl", "% o. NA", "Kum. o. NA", "% m. NA", "Kum. m. NA")
+  } else {
+    names <- c(name, "Anzahl", "% o. NA", "Kum. o. NA", "% m. NA", "Kum. m. NA")
+  }
+  colnames(a)<-names
+  a %>%  kable(row.names = FALSE) %>% kable_styling(bootstrap_options = c("striped", "hover"))
+}
+
+# Standard function for frequency tables with survey Design
+nice_svy_table <- function(data, ... , type="total", name=FALSE, test="Rao", excel=FALSE, row.names=FALSE, file, sheet="sheet1", append=FALSE, html=TRUE) {
+  variable <- enquos(...)
+  varnames <- as.character(variable)
+  varnames <-  sub('.','',variable)
+  
+  if(type=="total") {
+    tab <- data %>% group_by(!!! variable) %>% summarize(total = survey_total(na.rm = TRUE, vartype=c("se", "var", "ci")))
+    if(any(name==FALSE)) {
+      names <- c(varnames, "Bevölkerung", "SF", "Varianz", "KI 2,5%", "KI 97,5%")
+    } else {
+      names <- c(name, "Bevölkerung", "SF", "Varianz", "KI 2,5%", "KI 97,5%")
+    }
+    colnames(tab)<-names
+  }
+  
+  else if(type=="prop") {
+    tab <- data %>% group_by(!!! variable) %>% summarize(proportion = survey_mean(na.rm = TRUE, vartype=c("se", "var", "ci")))
+    
+    if(any(name==FALSE)) {
+      names <- c(varnames, "Anteil", "SF", "Varianz", "KI 2,5%", "KI 97,5%")
+    } else {
+      names <- c(name, "Anteil", "SF", "Varianz", "KI 2,5%", "KI 97,5%")
+    }
+    colnames(tab)<-names
+    
+  }
+  else stop('type must be total or prop (=proportion)')
+  
+  if(length(varnames)==1) {
+    tab_html <- tab %>% kable() %>% kable_styling(bootstrap_options = c("striped", "hover"))
+    
+  } else if(length(varnames)==2 & test=="Rao") {
+    test <- svychisq(reformulate(varnames), data, na.rm=TRUE)
+    test_text<-paste0("Rao-Scott Chi-Square Test: p = ", round(test$p.value[[1]], digits=3),
+                      ", F = ", round(test$statistic[[1]], digits=3), 
+                      ", ndf = ", round(test$parameter[[1]], digits=0),
+                      ", ddf = ", round(test$parameter[[2]], digits=0)
+    ) 
+    
+    tab_html <- tab %>% kable() %>% kable_styling(bootstrap_options = c("striped", "hover")) %>% 
+      collapse_rows(columns = 1:length(varnames), valign = "top") %>%
+      footnote(general = test_text, general_title = " ") 
+    
+  } else {
+    tab_html <- tab %>% kable() %>% kable_styling(bootstrap_options = c("striped", "hover")) %>%
+      collapse_rows(columns = 1:length(varnames), valign = "top")
+  }
+  
+  if(excel==TRUE){
+    write.xlsx(as.data.frame(tab), file, row.names = row.names, sheet=sheet, append = append)
+  }
+  
+  if(html==TRUE){
+    return(tab_html)
+  } else {
+    return(tab)
+  }
+}
+
+## grouped means
+nice_svy_gmean <- function(data, mean, ..., excel=FALSE, row.names=FALSE, file, sheet="sheet1", append=FALSE, html=TRUE){
+  mean <- enquo(mean)
+  group <- enquos(...)
+  groups <- as.character(group) 
+  groups <- sub('.','',groups)
+  
+  tab <- data %>% group_by(!!! group) %>% summarize(Durchschnitt=survey_mean(as.numeric(!!mean), na.rm = TRUE, vartype=c("se", "var", "ci")))
+  
+  if(length(groups)==1) {
+    tab_html <- tab %>% kable() %>% kable_styling(bootstrap_options = c("striped", "hover"))
+    
+  } else {
+    tab_html <- tab %>% kable() %>% kable_styling(bootstrap_options = c("striped", "hover")) %>%
+      collapse_rows(columns = 1:length(groups), valign = "top")
+  }
+  if(excel==TRUE){
+    write.xlsx(as.data.frame(tab), file, row.names = row.names, sheet=sheet, append = append)
+  }
+  if(html==TRUE){
+    return(tab_html)
+  } else {
+    return(tab)
+  }
+}
+
+##Regression
+subpop_reg <- function(formula, data, subpop) {
+  
+  subpop_quo <- enquo(subpop)
+  subpop_txt <- data$variables %>% select(!!subpop_quo) %>% colnames
+  
+  for(i in min(data$variables[subpop_txt]):max(data$variables[subpop_txt])) {
+    subpop_data <- filter(data, !!subpop_quo == i)
+    reg <- svyglm(formula, subpop_data)
+    
+    if(exists("reg_out")==TRUE) {
+      reg_out1 <- tidy(reg)
+      reg_out1[subpop_txt] <- i
+      reg_out <- rbind(reg_out, reg_out1)
+      
+      
+    } else {
+      
+      reg_out <- tidy(reg)
+      reg_out[subpop_txt] <- i
+    }
+  }
+  return(reg_out)
+}
+
+##Vorhersage
+subpop_pred <- function(formula, data, subpop, new_data) {
+  
+  subpop_quo <- enquo(subpop)
+  subpop_txt <- data$variables %>% select(!!subpop_quo) %>% colnames
+  
+  for(i in min(data$variables[subpop_txt]):max(data$variables[subpop_txt])){
+    subpop_data <- filter(data, !!subpop_quo == i)
+    reg <- svyglm(formula, subpop_data)
+    pred <- predict(reg, newdata=new_data)
+    
+    if(exists("reg_end")==TRUE){
+      pred <- cbind(new_data, pred, confint(pred))
+      pred[subpop_txt] <- i
+      reg_end <- rbind(reg_end, pred)
+    } else {
+      reg_end <- cbind(new_data, pred, confint(pred))
+      reg_end[subpop_txt] <- i
+    }
+  }
+  names(reg_end)[names(reg_end) == "link"] <- stri_sub(quo_name(formula[2]),1,-3)
+  row.names(reg_end) <- NULL
+  return(reg_end)
+}
+
+
+## survey trendtable
+trendtable <- function(data, trend.var, ..., time.var, excel=FALSE, row.names=FALSE, file, sheet="sheet1", append=FALSE){
+  
+  trend.var <- enquo(trend.var)
+  time.var <- enquo(time.var)
+  grouping <- enquos(...)
+  
+  if(class(data)[1]=="data.frame"){  
+    a <- data %>% group_by(!!time.var) %>%
+      group_by(!!!grouping, add=TRUE) %>%
+      group_by(!!trend.var, add=TRUE) %>%
+      summarize(total = n())
+  }
+  else if(class(data)[1]=="tbl_svy"){
+    a <- data %>% group_by(!!time.var) %>%
+      group_by(!!!grouping, add=TRUE) %>%
+      group_by(!!trend.var, add=TRUE) %>%
+      summarize(proportion=survey_mean(na.rm=TRUE, vartype=c("se", "var", "ci")))
+    
+  }
+  else stop('class of data must be data.frame or tbl_svy')
+  
+  b <- a %>% kable() %>% kable_styling(bootstrap_options = c("striped", "hover")) %>% 
+    collapse_rows(columns = 1:(2+length(grouping)), valign = "top")
+  
+  if(excel==TRUE){
+    write.xlsx(as.data.frame(a), file, row.names = row.names, sheet=sheet, append = append)
+  }
+  return(b)
+}
+
+## Survey effect size (Cohens D)
+esize <- function(data, ... , mean, ref='rolling', html=TRUE, excel=FALSE, row.names=FALSE, file, sheet="sheet1", append=FALSE){
+  mean <- enquo(mean)
+  mean1 <- quo_text(mean)
+  mean1 <- sym(mean1)
+  mean1 <- formula(expr(~ !!mean1))
+  
+  grouping <- enquos(...)
+  groups<-map(grouping, c(quo_text, sym))
+  groups<-reduce(groups, function(x, y) expr(!! x + !! y))
+  groups<- formula(expr(~ !!groups))
+  
+  
+  
+  if(class(data)[1]=="data.frame"){  
+    tab <- data %>%
+      group_by(!!!grouping) %>%
+      summarize(mean = mean(!!mean, na.rm=TRUE), sd=sqrt(var(!!mean, na.rm=TRUE)), total=n())
+    tab_selection <- tab %>% select(!!!grouping) %>% sapply(FUN=as.factor)
+    tab[c(colnames(tab_selection))] <- tab_selection
+    
+    move<- as.data.frame(tab) %>% distinct(!!!grouping[-1]) %>% nrow() %>% as.numeric()
+    
+    end <- nrow(tab) %>% as.numeric()
+    
+    
+    
+    if(ref=='rolling'){
+      tab2 <- tab[move+1:nrow(tab),]
+      print(tab2)
+      
+      s <- sqrt(((tab['total']-1)*tab['sd']^2+(tab2['total']-1)*tab2['sd']^2)/(tab['total']+tab2['total']-2))
+      D <- (tab2['mean']-tab['mean'])/s
+      DiffMean <- tab2['mean']-tab['mean']
+      tab['DiffMean']<-NA
+      tab['CohensD']<-NA
+      tab[(move+1):(nrow(tab)), 'DiffMean']<-DiffMean[1:as.numeric(nrow(D)-move),]
+      tab[(move+1):(nrow(tab)), 'CohensD']<-D[1:as.numeric(nrow(D)-move),]
+      tab <- tab %>% arrange(!!!rev(grouping))
+      tab <-cbind(as.data.frame(tab[,length(grouping):1]), as.data.frame(tab[,-1:(-length(grouping))]))
+    }
+    
+    else if(is.numeric(ref)==FALSE & ref!='rolling'){
+      error("ref must be numeric or rolling")
+    }
+    
+    else if(is.numeric(ref)==TRUE){
+      if (ref>=1 & ref%%1==0){
+        
+        
+        col<- quo_text(grouping[[1]])
+        row <- levels(as.factor(tab[[col]]))[ref]
+        
+        
+        tab2 <- tab[tab[col]==row,]
+        s <- sqrt(((tab[['total']]-1)*tab[['sd']]^2+(tab2[['total']]-1)*tab2[['sd']]^2)/(tab[['total']]+tab2[['total']]-2))
+        
+        tab['DiffMean'] <- tab[['mean']]-tab2[['mean']]
+        print(tab)
+        tab['CohensD'] <- (tab[['mean']]-tab2[['mean']])/s
+        tab[tab[col]==row, c('DiffMean', 'CohensD')] <- NA
+        
+        tab <- tab %>% arrange(!!!rev(grouping))
+        
+        tab <- cbind(as.data.frame(tab[,length(grouping):1]), as.data.frame(tab[,-1:(-length(grouping))]))
+        
+      }
+      else stop("ref must be an integer and >=1")
+      
+    }
+  }
+  
+  else if(class(data)[1]=="tbl_svy"){
+    a <- data %>%
+      group_by(!!!grouping) %>%
+      summarize(mean=survey_mean(!!mean, na.rm=TRUE))
+    
+    
+    b <- data %>% 
+      filter(!is.na(!!mean)) %>%
+      group_by(!!!grouping) %>%
+      summarize(total=survey_total(na.rm=TRUE))
+    
+    move <- a %>% distinct(!!!grouping[-1]) %>% nrow() %>% as.numeric()
+    
+    
+    sd <- svyby(mean1, groups, data, svyvar, na.rm=TRUE, na.rm.all = TRUE)
+    sd <- sd %>% rename("sd"=quo_text(mean))
+    sd["sd"]<-sqrt(sd["sd"])
+    sd <- sd %>% arrange(!!!grouping) ##hier nachschauen
+    sd <- sd["sd"]
+    
+    tab <- cbind(a[,1:grep("^mean$", colnames(a))],c(sd,b[,'total']))
+    tab_selection <- tab %>% select(!!!grouping) %>% sapply(FUN=as.factor)
+    tab[c(colnames(tab_selection))]<-tab_selection
+    
+    
+    if(ref=='rolling'){
+      tab2 <- tab[move+1:nrow(tab),]
+      
+      s <- sqrt(((tab['total']-1)*tab['sd']^2+(tab2['total']-1)*tab2['sd']^2)/(tab['total']+tab2['total']-2))
+      D <- (tab2['mean']-tab['mean'])/s
+      DiffMean <- tab2['mean']-tab['mean']
+      tab['DiffMean']<-NA
+      tab['CohensD']<-NA
+      tab[(move+1):(nrow(tab)), 'DiffMean']<-DiffMean[1:as.numeric(nrow(D)-move),]
+      tab[(move+1):(nrow(tab)), 'CohensD']<-D[1:as.numeric(nrow(D)-move),]
+      tab <- tab %>% arrange(!!!rev(grouping))
+      tab <-cbind(tab[,length(grouping):1], tab[,-1:(-length(grouping))])
+    }
+    
+    else if(is.numeric(ref)==FALSE & ref!='rolling'){
+      error("ref must be numeric or rolling")
+    }
+    
+    else if(is.numeric(ref)==TRUE){
+      if (ref>=1 & ref%%1==0){
+        col<- quo_text(grouping[[1]])
+        row <- levels(as.factor(tab[[col]]))[ref]
+        
+        
+        tab2 <- tab[tab[col]==row,]
+        s <- sqrt(((tab[['total']]-1)*tab[['sd']]^2+(tab2[['total']]-1)*tab2[['sd']]^2)/(tab[['total']]+tab2[['total']]-2))
+        
+        tab['DiffMean'] <- tab[['mean']]-tab2[['mean']]
+        print(tab)
+        tab['CohensD'] <- (tab[['mean']]-tab2[['mean']])/s
+        tab[tab[col]==row, c('DiffMean', 'CohensD')] <- NA
+        
+        tab <- tab %>% arrange(!!!rev(grouping))
+        
+        tab <- cbind(as.data.frame(tab[,length(grouping):1]), as.data.frame(tab[,-1:(-length(grouping))]))}
+      
+      else stop("ref must be an integer and >=1")
+      
+    }
+  }
+  
+  else stop('class of data must be data.frame or tbl_svy')
+  
+  tab_html<-tab %>% kable() %>% kable_styling(bootstrap_options = c("striped", "hover")) %>% 
+    collapse_rows(columns = 1:(length(grouping)), valign = "top")
+  
+  
+  
+  if(excel==TRUE){
+    write.xlsx(as.data.frame(tab), file, row.names = row.names, sheet=sheet, append = append)
+  }
+  
+  if(html==FALSE){
+    return(tab)
+  }
+  if(html==TRUE){
+    return(tab_html)
+  }
+}
+
+
+## Prevelance compare with up to two stratifications
+
+prev_compare <- function(design, ..., formula, prev, keys=c("SF", "Varianz", "KI 2,5%", "KI 97,5%"), comp, statistic="F", round=3,
+                         html=TRUE, excel=FALSE, file , row.names = FALSE, sheet = "sheet1", append = FALSE) {
+  grouping <- enquos(...)
+  
+  grouping_text <- as.character(grouping)
+  grouping_text <- sub('.','',grouping_text)
+  
+  form_elements <- quo_name(formula[[2]])
+  form_elements <- strsplit(form_elements, "\\s\\+\\s")[[1]]
+  
+  comp_text <- form_elements[2]
+  comp <- sym(comp_text)
+  
+  
+  if (length(grouping)>=2) {
+    p <- c()
+    ## for first and second grouping variable
+    for(i in 1:length(levels(design$variables[[grouping_text[1]]]))){
+      for(h in 1:length(levels(design$variables[[grouping_text[2]]]))){
+        design1 <- design %>% filter(!!(grouping[[1]])==levels(design$variables[[grouping_text[1]]])[i],
+                                     !!(grouping[[2]])==levels(design$variables[[grouping_text[2]]])[h])
+        #filtert nach der ersten und zweiten grouping variable erst erstes und danach folgende level
+        
+        chisq <-svychisq(formula, design1, statistic=statistic)
+        p <- c(p, round(chisq$p.value[[1]], digits=3))
+      }
+    }
+    
+    
+    prop_table <- nice_svy_table(design, !! comp, !!!grouping, !! sym(form_elements[1]), type="prop", html = FALSE)
+    # Tabelle mit Werten und erster grouping Variable
+    prop_table1 <- prop_table %>% filter(!! sym(form_elements[1])==prev) %>%
+      select(!!! syms(form_elements), !!!grouping, Anteil, !!! syms(keys))
+    prop_table1 <- reshape(as.data.frame(prop_table1), timevar = comp_text, direction = "wide", idvar=c(form_elements[1], grouping_text))
+    
+    prop_table1["p"] <- p
+    output_table <- prop_table1
+    
+  }
+  
+  if (length(grouping)>=1) {
+    p <- c()
+    ## for first grouping variable
+    for(i in 1:length(levels(design$variables[[grouping_text[1]]]))){
+      design1 <- design %>% filter(!!(grouping[[1]])==levels(design$variables[[grouping_text[1]]])[i])
+      # filtert nach der ersten grouping variable erst erstes und danach folgende level
+      
+      chisq <-svychisq(formula, design1, statistic=statistic)
+      p <- c(p, round(chisq$p.value[[1]], digits=3))
+      # test wird nach Formel durchgef?hrt innerhalb eingeschr?nkter Gruppe
+      
+    }
+    
+    prop_table <- nice_svy_table(design, !! comp, !!(grouping[[1]]), !! sym(form_elements[1]), type="prop", html = FALSE)
+    # Tabelle mit Werten und erster grouping Variable
+    prop_table1 <- prop_table %>% filter(!! sym(form_elements[1])==prev) %>%
+      select(!!! syms(form_elements), !!(grouping[[1]]), Anteil, !!! syms(keys))
+    prop_table1 <- reshape(as.data.frame(prop_table1), timevar = comp_text, direction = "wide", idvar=c(form_elements[1], grouping_text[1] ))
+    
+    prop_table1["p"] <- p
+    
+    if (length(grouping)>1) {
+      output_table <- bind_rows(output_table, prop_table1)
+    } else {
+      output_table <- prop_table1
+    }
+  }
+  
+  chisq <-svychisq(formula, design, statistic=statistic)
+  p <- round(chisq$p.value[[1]], digits=3)
+  
+  prop_table <- nice_svy_table(design, !! comp, !! sym(form_elements[1]), type="prop", html = FALSE)
+  
+  prop_table1 <- prop_table %>% filter(!! sym(form_elements[1])==prev) %>%
+    select(!!! syms(form_elements), Anteil, !!! syms(keys))
+  prop_table1 <- reshape(as.data.frame(prop_table1), timevar = comp_text, direction = "wide", idvar=c(form_elements[1]))
+  prop_table1["p"] <- p
+  
+  if (length(grouping)>0) {
+    output_table <- bind_rows(output_table, prop_table1)
+  } else {
+    output_table <- prop_table1
+  }
+  
+  num_names <- Filter(is.numeric, output_table) %>% colnames()
+  
+  output_table[, num_names] <- round(output_table[, num_names], round)#
+  
+  output_table[, c(form_elements[1], grouping_text)] <- sapply(output_table[, c(form_elements[1], grouping_text)], as.character)
+  output_table[is.na(output_table)] <- ""
+  output_table <- arrange(output_table, !!!grouping)
+  
+  if(excel==TRUE){
+    
+    write.xlsx(as.data.frame(output_table), file, row.names = row.names, sheet=sheet, append = append)
+  }
+  
+  
+  if(html==TRUE){
+    
+    output_html <- output_table %>%  kable() %>% kable_styling(bootstrap_options = c("striped", "hover")) %>% 
+      collapse_rows(columns = 1:length(grouping_text), valign = "top") 
+    
+    return(output_html)
+    
+  } else {
+    return(output_table)
+  }
+}
+
+
+### mean compare ###
+mean_compare <- function(design, ..., formula, test.option="ttest", round=3, excel=FALSE, row.names=FALSE, file, sheet="sheet1", append=FALSE, html=TRUE) {
+  
+  grouping <- enquos(...)
+  
+  grouping_text <- as.character(grouping)
+  grouping_text <- sub('.','',grouping_text)
+  
+  
+  target_var <- sym(quo_name(formula[[2]]))
+  comp_text <- quo_name(formula[[3]]) #Spaltenname
+  comp <- sym(comp_text)
+  # Dieser Teil der Formel muss für Berechnung group_by als quosure vorliegen
+  
+  
+  
+  if (length(grouping)>=2) {
+    p <- c()
+    sd <- data.frame(sd = numeric(),
+                     stringsAsFactors = FALSE)
+    ## for first and second grouping variable
+    for(i in 1:length(levels(design$variables[[grouping_text[1]]]))){
+      for(h in 1:length(levels(design$variables[[grouping_text[2]]]))){
+        design1 <- design %>% filter(!!(grouping[[1]])==levels(design$variables[[grouping_text[1]]])[i],
+                                     !!(grouping[[2]])==levels(design$variables[[grouping_text[2]]])[h])
+        
+        #filtert nach der ersten und zweiten grouping variable erst erstes und danach folgende level
+        
+        sd_append <- design1 %>% group_by(!!comp) %>% summarise(sd=survey_sd(!!target_var, na.rm=TRUE))
+        sd <- rbind(sd, sd_append["sd"])
+        
+        if(test.option=="ttest") {
+          test <-svyttest(formula, design1) 
+          p <- c(p, round(test$p.value[[1]], digits=3))
+          
+        } else if(test.option=="wilcox") {
+          test <-svyranktest(formula, design1)
+          
+          p <- c(p, round(test$p.value[[1]], digits=3))
+        } else stop('test must be ttest or wilcox')
+      }
+    }
+    
+    mean_table <- nice_svy_gmean(design, !!target_var, !!!grouping, !! comp, html = FALSE)
+    mean_table <- cbind(mean_table, sd)
+    mean_table["varname"] <- quo_name(formula[[2]])
+    
+    mean_table1 <- mean_table %>%
+      filter(!is.na(!!comp)) %>%
+      select(varname, !!comp, !!!grouping, sd, Durchschnitt, Durchschnitt_low, Durchschnitt_upp)
+    
+    mean_table1 <- reshape(as.data.frame(mean_table1), timevar = comp_text, direction = "wide", idvar=c("varname", grouping_text))
+    
+    mean_table1["p"] <- p
+    mean_table1["varname"] <- quo_name(formula[[2]]) # Name der Variable die untersucht wird
+    
+    output_table <- mean_table1
+    
+  }
+  
+  if (length(grouping)>=1) {
+    sd <- data.frame(sd = numeric(),
+                     stringsAsFactors = FALSE)
+    p <- c()
+    ## for first grouping variable
+    for(i in 1:length(levels(design$variables[[grouping_text[1]]]))){
+      design1 <- design %>% filter(!!(grouping[[1]])==levels(design$variables[[grouping_text[1]]])[i])
+      # filtert nach der ersten grouping variable erst erstes und danach folgende level
+      
+      sd_append <- design1 %>% group_by(!!comp) %>% summarise(sd=survey_sd(!!target_var, na.rm=TRUE))
+      sd <- rbind(sd, sd_append["sd"])
+      
+      if(test.option=="ttest") {
+        test <-svyttest(formula, design1) 
+        p <- c(p, round(test$p.value[[1]], digits=3))
+      }
+      
+      if(test.option=="wilcox") {
+        test <-svyranktest(formula, design1) 
+        p <- c(p, round(test$p.value[[1]], digits=3))
+      }
+    }
+    print(p)
+    
+    mean_table <- nice_svy_gmean(design, mean = !!target_var, !!(grouping[[1]]), !! comp, html = FALSE)
+    mean_table <- cbind(mean_table, sd)
+    mean_table["varname"] <- quo_name(formula[[2]])
+    
+    mean_table1 <- mean_table %>%
+      filter(!is.na(!!comp)) %>%
+      select(varname, !!comp, !!(grouping[[1]]), Durchschnitt, sd, Durchschnitt_low, Durchschnitt_upp)
+    
+    mean_table1 <- reshape(as.data.frame(mean_table1), timevar = comp_text, direction = "wide", idvar=c("varname", grouping_text[1]))
+    
+    mean_table1["p"] <- p
+    mean_table1["varname"] <- quo_name(formula[[2]]) # Name der untersuchten variable
+    
+    if (length(grouping)>1) {
+      output_table <- bind_rows(output_table, mean_table1)
+    } else {
+      output_table <- mean_table1
+    }
+  }
+  
+  # no grouping
+  sd <- design %>% group_by(!!comp) %>% summarise(sd=survey_sd(!!target_var, na.rm=TRUE))
+  sd <- sd["sd"]
+  
+  if(test.option=="ttest") {
+    test <-svyttest(formula, design) 
+    p <- round(test$p.value[[1]], digits=3)
+  }
+  
+  if(test.option=="wilcox") {
+    test <-svyranktest(formula, design) 
+    p <-  round(test$p.value[[1]], digits=3)
+  }
+  
+  
+  mean_table <- nice_svy_gmean(design, mean=!!target_var, !! comp, html = FALSE)
+  mean_table <- cbind(mean_table, sd)
+  mean_table["varname"] <- quo_name(formula[[2]])
+  
+  mean_table1 <- mean_table %>%
+    filter(!is.na(!!comp)) %>% 
+    select(varname, sd, !!comp, Durchschnitt, Durchschnitt_low, Durchschnitt_upp)
+  
+  mean_table1 <- reshape(as.data.frame(mean_table1), timevar = comp_text, direction = "wide", idvar = "varname" )
+  
+  mean_table1["p"] <- p
+  
+  # different handling if there are groups or not
+  if (length(grouping)>0) {
+    output_table <- bind_rows(output_table, mean_table1)
+  } else {
+    output_table <- mean_table1
+  }
+  
+  num_names <- Filter(is.numeric, output_table) %>% colnames()
+  
+  output_table[, num_names] <- round(output_table[, num_names], round)
+  
+  output_table[, c("varname", grouping_text)] <- sapply(output_table[, c("varname", grouping_text)], as.character)
+  output_table[is.na(output_table)] <- ""
+  output_table <- arrange(output_table, !!!grouping)
+  
+  if(excel==TRUE){
+    
+    write.xlsx(as.data.frame(output_table), file, row.names = row.names, sheet=sheet, append = append)
+  }
+  
+  
+  if(html==TRUE){
+    
+    output_html <- output_table %>%  kable() %>% kable_styling(bootstrap_options = c("striped", "hover")) %>% 
+      collapse_rows(columns = 1:length(grouping_text), valign = "top") 
+    
+    return(output_html)
+    
+  } else {
+    return(output_table)
+  }
+}
+
+##############
+### lavaan ###
+##############
+
+# multiple group Wald-Test of Coefficiants
+mg_wald <- function(fit_model, const, par_name, html=TRUE) {
+  model.partest <- data.frame(paramter=character(0), Chi=integer(0) , df=numeric(0), pValue=integer(0), SE=character(0))
+  
+  for (par in 1:length(const)) {
+    a<-lavTestWald(fit_model, constraints=const[par])
+    model.partest[,1] <- as.character(c(model.partest[,1]))
+    model.partest[,5] <- as.character(c(model.partest[,5]))
+    model.partest[nrow(model.partest) + 1,]  <- list(par_name[par], a$stat[[1]], a$df[[1]], a$p.value[[1]], a$se[[1]])
+  }
+  
+  if(html==TRUE) {
+    model.partes.html <- model.partest %>% kable() %>% kable_styling(bootstrap_options = c("striped", "hover"))
+    return(model.partes.html)
+  } else {
+    return(model.partest)
+  }
+}
+
+```
+
+#Datensatz
+
+```{r, message=FALSE, warning=FALSE}
+kiggs2_qs <- read.dta13("S:/Projekte/Abt2_Daten/SURVEYS/KiGGS2/Daten/KiGGS2_QS_v17.dta")
+kiggs2_qs <- droplevels(kiggs2_qs)
+ausschnitt <- kiggs2_qs[, c("sex", "age", "VAsdq", "MImigback", "ppoint", "wQS")]
+
+cplx_kiggs2_qs <- kiggs2_qs %>% as_survey_design(weights="wQS", ids="ppoint")
+
+cplx_ausschnitt <- ausschnitt %>% as_survey_design(weights="wQS", ids="ppoint")
+
+cplx_ausschnitt2 <- cplx_kiggs2_qs %>% select(sex, age, VAsdq, MImigback)
+
+```
+
+# Datensatzbeschreibung
+Es ist u. anderem möglich
+1. sich einen ganzen Datensatz ungewichtet beschreiben zu lassen
+2. sich Variablen aus dem Datensatz zu wählen
+3. einen gewichteten Datensatz zu beschreiben (natürlich auch Auswahl einzelner Variablen)
+4. Ausgabe als Excel möglich
+
+`pub_describe(data, ..., round = 3, pub = TRUE, html = TRUE, excel=FALSE)`
+
+```{r}
+pub_describe(ausschnitt)
+pub_describe(kiggs2_qs, sex, age)
+pub_describe(cplx_ausschnitt)
+
+
+
+pub_describe(cplx_kiggs2_qs, VAsdq, sex, MImigback)
+```
+
+# Tabelle für Frequencies
+Hier noch zwei getrennte Funktionen einmal ungewichtete (sehr eingeschränkt) und einmal gewichtete Daten.
+Über `name` können die Variablen in der Tabbelle angegeben werden, werden sie nicht angegeben wird der Variablenname übernommen.
+
+Nächster Schrit ist zusammenfürhung in eine Funktion. Werden in der gewichteten Tabellenfunktion nur zwei Variablen, also eine Stratefizierungsvariable, angegeben wird unter der Ausgabe das Ergebnis des Rao-Scott Chi-Square Test ausgegeben.
+
+ungewichtet: `nice_table(data, variable, name=FALSE)`
+gewichtet: `nice_svy_table(data, ... , type="total", name=FALSE, test="Rao", excel=FALSE, row.names=FALSE, file, sheet="sheet1", append=FALSE, html=TRUE)`
+```{r}
+# Standard function for frequency tables without survey Design
+nice_table(kiggs2_qs, "sex", name="Geschlecht")
+
+nice_svy_table(cplx_kiggs2_qs, sex, VAEsdq_k2, type="total")
+nice_svy_table(cplx_kiggs2_qs, sex, VAEsdq_k2, type="prop")
+```
+
+# Vergleiche
+## Mittelwerte von Subgruppen (mit test)
+Mit der Funktion können Mittelwerte zwischen zwei Gruppen stratifiziert nach weiteren Subgruppen in einer übersichtlichen geschachtelten Tabelle ausgegeben werden. Die Angabe der Variable über die der Mittelwert gebildet werden soll und die Gruppen deren Einfluss getestet werden soll werden über `formula` angegeben. Die weiteren Stratifizierungen über `...` zu erst werden die Mittelwerte ohne Sratifizierung verglichen, danch mit der erstangegebenen, dann mit der Kombination aus Erst- und Zweitangabe. Die Stratifizierungsvariablen dürfen keine `NA`s enthalten. Die Anwendung ist auf zwei Stratifizierungsvariablen beschränkt Werden diese vorher ausgeschlossen ist zu beachten, dass diese auch aus der Berechnung ohne Stratifizierungsvariable ausgeschlossen sind.
+
+Was bedeutet Ergebnis, wenn Variable mehrere Ausprägungen hat?
+
+`mean_compare(design, ..., formula, test.option="ttest", round=3, excel=FALSE, row.names=FALSE, file, sheet="sheet1", append=FALSE, html=TRUE)`
+```{r}
+class(kiggs2_qs$sexa)
+cplx_kiggs2_qs %>% filter(!is.na(SDEses)) %>% mean_compare(agegrpK2, SDEses, formula=VAEsdq~sexa)
+
+```
+
+## Prävalenzen (mit test)
+
+Mit der Funktion können Prävalenzen zwischen zwei Gruppen stratifiziert nach weiteren Subgruppen in einer übersichtlichen geschachtelten Tabelle ausgegeben werden. Die Angabe der Variable über die der Mittelwert gebildet werden soll und die Gruppen deren Einfluss getestet werden soll werden über `formula` angegeben. Die weiteren Stratifizierungen über `...` zu erst werden die Mittelwerte ohne Sratifizierung verglichen, danch mit der erstangegebenen, dann mit der Kombination aus Erst- und Zweitangabe. Die Stratifizierungsvariablen dürfen keine `NA`s enthalten. Die Anwendung ist auf zwei Stratifizierungsvariablen beschränkt Werden diese vorher ausgeschlossen ist zu beachten, dass diese auch aus der Berechnung ohne Stratifizierungsvariable ausgeschlossen sind.
+
+Wichtig es wird zwar nur die über `prev` definierte Prävalenz ausgegeben, jedoch die gesamte verteilung in den Test einbezogen. Eine Variable mit drei Kategorien ergibt daher ein anderes Testergebnisse als wenn zwei der drei Kategorien vorher zusammengefasst wurden.
+
+`prev_compare(design, ..., formula, prev, keys=c("SF", "Varianz", "KI 2,5%", "KI 97,5%"), comp, statistic="F", round=3, html=TRUE, excel=FALSE, file , row.names = FALSE, sheet = "sheet1", append = FALSE)`
+```{r}
+table(kiggs2_qs$VAEsdq_k2)
+
+prev_compare(cplx_kiggs2_qs, agegrpK2, formula = ~VAEsdq_k2+sexa, prev="Auffällig")
+
+```
+
+## Entwicklung von Verteilungen/gruppierte Verteilungen?
+`trendtable(data, trend.var, ..., time.var, excel=FALSE, row.names=FALSE, file, sheet="sheet1", append=FALSE)`
+```{r}
+
+```
+
+## gruppierte means
+`nice_svy_gmean <- function(data, mean, ..., excel=FALSE, row.names=FALSE, file, sheet="sheet1", append=FALSE, html=TRUE)`
+```{r}
+
+```
